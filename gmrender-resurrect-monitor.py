@@ -41,7 +41,7 @@ class SystemMonitor():
       self.timer = None
       self.paused = False
 
-    elif state == "PAUSED_PLAYBACK":
+    elif state == "PAUSED":
       # Shouldn't ever have a running timer when entering paused state unless you somehow went from STOPPED to
       assert(self.timer == None)
 
@@ -154,7 +154,7 @@ if __name__ == "__main__":
 
   # Subscribe to gmedia-resurrect events
   bus = pydbus.SystemBus()
-  bus.subscribe(object=target, iface="com.hzeller.gmedia_resurrect.v1.Transport", signal="State", signal_fired=state_signal_callback)
+  bus.subscribe(object=target, iface="com.hzeller.gmedia_resurrect.v1.Monitor", signal="PlaybackState", signal_fired=state_signal_callback)
   
   # Start the main loop to monitor for events
   loop = GLib.MainLoop()
