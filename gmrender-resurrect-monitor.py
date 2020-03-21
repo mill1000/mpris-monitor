@@ -114,8 +114,13 @@ if __name__ == "__main__":
   parser.add_argument("--pause_timeout", help="Disable system power when paused for this duration (seconds)", default=60, type=int)
   parser.add_argument("--stop_timeout", help="Disable system power when stopped for this duration (seconds)", default=5, type=int)
   parser.add_argument("--uuid", help="Monitor for a specific gmedia-resurrect instance given by the UUID")
-  parser.add_argument("--discover", help="List Kasa devices discovered on the network", action="store_true")
+  parser.add_argument("--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
   parser.add_argument("kasa_device_alias", help="Kasa device to control", nargs="?", default=None)
+  
+  # Add options to power on/off the system without monitoring DBus
+  powergroup = parser.add_mutually_exclusive_group(required=False)
+  powergroup.add_argument("--power_on", help="Power the system on and exit.", action="store_true")
+  powergroup.add_argument("--power_off", help="Power the system off and exit.", action="store_true")
   args = parser.parse_args()
   
   if args.discover == False and args.kasa_device_alias is None:
@@ -147,6 +152,14 @@ if __name__ == "__main__":
   # Create system monitor object to handle state
   monitor = SystemMonitor(args.pause_timeout, args.stop_timeout)
   
+  # Force power on or off on commands
+  if args.power_on:
+    monitor.Activate()
+    exit()
+  elif args.power_off:
+    monitor.Deactivate()
+    exit()
+
   # Listen for events from a particular instance
   target = None
   if args.uuid:
