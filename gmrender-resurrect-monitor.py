@@ -13,11 +13,13 @@ from gi.repository import GLib
 import pyHS100 as kasa
 
 def state_signal_callback(sender, object, iface, signal, params):
-  state, *remaining = params
+  
+  _interface, values, *remaining = params
 
-  logger.debug("Got signal from '{0}': '{1}' = '{2}'".format(object, signal, state))
+  logger.debug("Got signal from '{0}':'{1}' '{2}' = '{3}'".format(object, iface, signal, params))
 
-  monitor.Update(state)
+  if "PlaybackStatus" in values:
+    monitor.Update(values["PlaybackStatus"])
 
 class SystemMonitor():
   def __init__(self, long, short):
@@ -29,7 +31,7 @@ class SystemMonitor():
     self.paused = False
 
   def Update(self, state):
-    if state == "PLAYING":
+    if state == "Playing":
       if not self.active:
         self.Activate()
 
@@ -41,7 +43,7 @@ class SystemMonitor():
       self.timer = None
       self.paused = False
 
-    elif state == "PAUSED":
+    elif state == "Paused":
       # Shouldn't ever have a running timer when entering paused state unless you somehow went from STOPPED to
       assert(self.timer == None)
 
@@ -51,7 +53,7 @@ class SystemMonitor():
       self.timer.start()
       self.paused = True
 
-    elif state == "STOPPED":
+    elif state == "Stopped":
       if not self.active:
         return
 
@@ -113,14 +115,8 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Automate system power by subscribing to gmrender-resurrect D-Bus signals.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
   parser.add_argument("--pause_timeout", help="Disable system power when paused for this duration (seconds)", default=60, type=int)
   parser.add_argument("--stop_timeout", help="Disable system power when stopped for this duration (seconds)", default=5, type=int)
-  parser.add_argument("--uuid", help="Monitor for a specific gmedia-resurrect instance given by the UUID")
   parser.add_argument("--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
   parser.add_argument("kasa_device_alias", help="Kasa device to control", nargs="?", default=None)
-  
-  # Add options to power on/off the system without monitoring DBus
-  powergroup = parser.add_mutually_exclusive_group(required=False)
-  powergroup.add_argument("--power_on", help="Power the system on and exit.", action="store_true")
-  powergroup.add_argument("--power_off", help="Power the system off and exit.", action="store_true")
   args = parser.parse_args()
   
   if args.discover == False and args.kasa_device_alias is None:
@@ -146,28 +142,14 @@ if __name__ == "__main__":
     logger.error("Could not find Kasa device '{0}'".format(args.kasa_device_alias))
     exit()
 
-  #strip = kasa.SmartStrip("192.168.1.101")
   logger.info("Using Kasa device '{0}'".format(strip.alias))
 
   # Create system monitor object to handle state
   monitor = SystemMonitor(args.pause_timeout, args.stop_timeout)
   
-  # Force power on or off on commands
-  if args.power_on:
-    monitor.Activate()
-    exit()
-  elif args.power_off:
-    monitor.Deactivate()
-    exit()
-
-  # Listen for events from a particular instance
-  target = None
-  if args.uuid:
-    target = "/com/hzeller/gmedia_resurrect/" + args.uuid.replace("-", "_")
-
   # Subscribe to gmedia-resurrect events
   bus = pydbus.SystemBus()
-  bus.subscribe(object=target, iface="com.hzeller.gmedia_resurrect.v1.Monitor", signal="PlaybackState", signal_fired=state_signal_callback)
+  bus.subscribe(object="/org/mpris/MediaPlayer2", iface="org.freedesktop.DBus.Properties", signal="PropertiesChanged", signal_fired=state_signal_callback)
   
   # Start the main loop to monitor for events
   loop = GLib.MainLoop()
