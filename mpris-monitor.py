@@ -48,7 +48,7 @@ class SystemMonitor():
       assert(self.timer == None)
 
       # Start shutdown timer with long interval
-      logger.debug("Starting long ({0} s) shutdown timer".format(self.long_timeout))
+      logger.debug("Starting long ({0} s) shutdown timer.".format(self.long_timeout))
       self.timer = threading.Timer(self.long_timeout, self.Deactivate)
       self.timer.start()
       self.paused = True
@@ -67,12 +67,12 @@ class SystemMonitor():
         return
 
       # Start shutdown timer with short interval
-      logger.debug("Starting short ({0} s) shutdown timer".format(self.short_timeout))
+      logger.debug("Starting short ({0} s) shutdown timer.".format(self.short_timeout))
       self.timer = threading.Timer(self.short_timeout, self.Deactivate)
       self.timer.start()
 
   def Activate(self):
-    logger.info("Enabling System Power")
+    logger.info("Enabling System Power.")
 
     # Preamp
     strip.turn_on(index=0)
@@ -87,7 +87,7 @@ class SystemMonitor():
     self.active = True
 
   def Deactivate(self):
-    logger.info("Disabling System Power")
+    logger.info("Disabling System Power.")
 
     # Amp 2
     strip.turn_off(index=2)
@@ -109,14 +109,14 @@ class SystemMonitor():
 if __name__ == "__main__":
   # Basic log config
   logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-  logger = logging.getLogger("gmrender-resurrect-monitor")
+  logger = logging.getLogger("mpris-monitor")
 
   # Argument parsing
-  parser = argparse.ArgumentParser(description="Automate system power by subscribing to gmrender-resurrect D-Bus signals.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-  parser.add_argument("--pause_timeout", help="Disable system power when paused for this duration (seconds)", default=60, type=int)
-  parser.add_argument("--stop_timeout", help="Disable system power when stopped for this duration (seconds)", default=5, type=int)
+  parser = argparse.ArgumentParser(description="Automate system power by subscribing to MPRIS D-Bus signals.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+  parser.add_argument("--pause_timeout", help="Disable system power when paused for this duration (seconds).", default=60, type=int)
+  parser.add_argument("--stop_timeout", help="Disable system power when stopped for this duration (seconds).", default=5, type=int)
   parser.add_argument("--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
-  parser.add_argument("kasa_device_alias", help="Kasa device to control", nargs="?", default=None)
+  parser.add_argument("kasa_device_alias", help="Kasa device to control.", nargs="?", default=None)
   args = parser.parse_args()
   
   if args.discover == False and args.kasa_device_alias is None:
@@ -139,15 +139,15 @@ if __name__ == "__main__":
   strip = next((x for x in kasa_devices if x.alias == args.kasa_device_alias), None)
 
   if strip is None:
-    logger.error("Could not find Kasa device '{0}'".format(args.kasa_device_alias))
+    logger.error("Could not find Kasa device '{0}'.".format(args.kasa_device_alias))
     exit()
 
-  logger.info("Using Kasa device '{0}'".format(strip.alias))
+  logger.info("Using Kasa device '{0}'.".format(strip.alias))
 
   # Create system monitor object to handle state
   monitor = SystemMonitor(args.pause_timeout, args.stop_timeout)
   
-  # Subscribe to gmedia-resurrect events
+  # Subscribe to MPRIS events
   bus = pydbus.SystemBus()
   bus.subscribe(object="/org/mpris/MediaPlayer2", iface="org.freedesktop.DBus.Properties", signal="PropertiesChanged", signal_fired=state_signal_callback)
   
