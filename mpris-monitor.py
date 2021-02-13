@@ -13,7 +13,6 @@ from gi.repository import GLib
 import pyHS100 as kasa
 
 def state_signal_callback(sender, object, iface, signal, params):
-  
   _interface, values, *remaining = params
 
   logger.debug("Got signal from '{0}':'{1}' '{2}' = '{3}'".format(object, iface, signal, params))
@@ -29,6 +28,9 @@ class SystemMonitor():
     self.active = False
     self.timer = None
     self.paused = False
+
+    self.activate_callback = None
+    self.deactivate_callback = None
 
   def Update(self, state):
     if state == "Playing":
@@ -74,30 +76,16 @@ class SystemMonitor():
   def Activate(self):
     logger.info("Enabling System Power.")
 
-    # Preamp
-    strip.turn_on(index=0)
-    time.sleep(1)
-    # Amp 1
-    strip.turn_on(index=1)
-    time.sleep(1)
-    # Amp 2
-    strip.turn_on(index=2)
-    time.sleep(1)
+    if self.activate_callback:
+      self.activate_callback()
 
     self.active = True
 
   def Deactivate(self):
     logger.info("Disabling System Power.")
 
-    # Amp 2
-    strip.turn_off(index=2)
-    time.sleep(1)
-    # Amp 1
-    strip.turn_off(index=1)
-    time.sleep(1)
-    # Preamp
-    strip.turn_off(index=0)
-    time.sleep(1)
+    if self.deactivate_callback:
+      self.deactivate_callback()
 
     self.active = False
     
@@ -118,7 +106,7 @@ if __name__ == "__main__":
   parser.add_argument("--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
   parser.add_argument("kasa_device_alias", help="Kasa device to control.", nargs="?", default=None)
   args = parser.parse_args()
-  
+
   if args.discover == False and args.kasa_device_alias is None:
     logger.error("Target Kasa device alias must be supplied.")
     exit()
@@ -144,8 +132,33 @@ if __name__ == "__main__":
 
   logger.info("Using Kasa device '{0}'.".format(strip.alias))
 
+ # Local functions for monitor callbacks
+  def power_on():
+    # Preamp
+    strip.turn_on(index=0)
+    time.sleep(1)
+    # Amp 1
+    strip.turn_on(index=1)
+    time.sleep(1)
+    # Amp 2
+    strip.turn_on(index=2)
+    time.sleep(1)
+
+  def power_off():
+    # Amp 2
+    strip.turn_off(index=2)
+    time.sleep(1)
+    # Amp 1
+    strip.turn_off(index=1)
+    time.sleep(1)
+    # Preamp
+    strip.turn_off(index=0)
+    time.sleep(1)
+
   # Create system monitor object to handle state
   monitor = SystemMonitor(args.pause_timeout, args.stop_timeout)
+  monitor.activate_callback = power_on
+  monitor.deactivate_callback = power_off
   
   # Subscribe to MPRIS events
   bus = pydbus.SystemBus()
