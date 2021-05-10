@@ -5,61 +5,82 @@ import argparse
 import logging
 import time
 import subprocess
+import enum
 
 # DBus interaction
 import pydbus
 from gi.repository import GLib
 
-def state_signal_callback(sender, object, iface, signal, params):
-  _interface, values, *remaining = params
-
-  logger.debug("Got signal from '{0}':'{1}' '{2}' = '{3}'".format(object, iface, signal, params))
-
-  if "PlaybackStatus" in values:
-    monitor.Update(values["PlaybackStatus"])
+class State(enum.Enum):
+  ACTIVE = 1
+  PAUSED = 2
+  IDLE = 3
 
 class SystemMonitor():
   def __init__(self, long, short):
     self.short_timeout = short
     self.long_timeout = long
 
-    self.active = False
+    self.state = State.IDLE
     self.timer = None
-    self.paused = False
 
     self.activate_callback = None
     self.deactivate_callback = None
 
-  def Update(self, state):
-    if state == "Playing":
-      if not self.active:
-        self.Activate()
+    self._active_players = set()
 
+  def Update(self, sender, state):
+    if state == "Playing":
+      # Add the sender to the active list
+      self._active_players.add(sender)
+
+      # Activate if necessary
+      if self.state == State.IDLE:
+        self._activate()
+
+      # Ensure state is active
+      self.state = State.ACTIVE
+
+      # Disable the shutdown timer if running
       if self.timer and self.timer.is_alive():
         logger.debug("Disabled shutdown timer.")
         self.timer.cancel()
 
       # Delete existing timer
       self.timer = None
-      self.paused = False
 
     elif state == "Paused":
-      # Shouldn't ever have a running timer when entering paused state unless you somehow went from STOPPED to
+      # Player is not longer active
+      self._active_players.discard(sender)
+
+      # No action unless this is the last player
+      if len(self._active_players):
+        return
+
+      # Shouldn't have a timer unless we somehow went from STOPPED to PAUSED
       assert(self.timer == None)
 
       # Start shutdown timer with long interval
       logger.debug("Starting long ({0} s) shutdown timer.".format(self.long_timeout))
-      self.timer = threading.Timer(self.long_timeout, self.Deactivate)
+      self.timer = threading.Timer(self.long_timeout, self._deactivate)
       self.timer.start()
-      self.paused = True
+      self.state = State.PAUSED
 
     elif state == "Stopped":
-      if not self.active:
+      # Player is not longer active
+      self._active_players.discard(sender)
+
+      # No action unless this is the last player
+      if len(self._active_players):
         return
 
-      if self.paused:
+      # Nothing to do if already idle
+      if self.state == State.IDLE:
+        return
+
+      if self.state == State.PAUSED:
+        # Cancel existing long timer
         assert(self.timer)
-        # If paused, we want to start a short timer
         self.timer.cancel()
       elif self.timer:
         # If timer exists, it should be running
@@ -68,24 +89,24 @@ class SystemMonitor():
 
       # Start shutdown timer with short interval
       logger.debug("Starting short ({0} s) shutdown timer.".format(self.short_timeout))
-      self.timer = threading.Timer(self.short_timeout, self.Deactivate)
+      self.timer = threading.Timer(self.short_timeout, self._deactivate)
       self.timer.start()
 
-  def Activate(self):
+  def _activate(self):
     logger.info("Enabling System Power.")
 
     if self.activate_callback:
       self.activate_callback()
 
-    self.active = True
+    self.state = State.ACTIVE
 
-  def Deactivate(self):
+  def _deactivate(self):
     logger.info("Disabling System Power.")
 
     if self.deactivate_callback:
       self.deactivate_callback()
 
-    self.active = False
+    self.state = State.IDLE
     
     # Stop and destroy timer if present
     if self.timer:
@@ -115,9 +136,17 @@ if __name__ == "__main__":
   monitor.activate_callback = power_on
   monitor.deactivate_callback = power_off
   
+  def signal_fired_callback(sender, object, iface, signal, params):
+    _interface, values, *remaining = params
+
+    logger.debug("Got signal from '{0}':'{1}' '{2}' = '{3}'".format(object, iface, signal, params))
+
+    if "PlaybackStatus" in values:
+      monitor.Update(sender, values["PlaybackStatus"])
+
   # Subscribe to MPRIS events
   bus = pydbus.SystemBus()
-  bus.subscribe(object="/org/mpris/MediaPlayer2", iface="org.freedesktop.DBus.Properties", signal="PropertiesChanged", signal_fired=state_signal_callback)
+  bus.subscribe(object="/org/mpris/MediaPlayer2", iface="org.freedesktop.DBus.Properties", signal="PropertiesChanged", signal_fired=signal_fired_callback)
   
   # Start the main loop to monitor for events
   loop = GLib.MainLoop()
