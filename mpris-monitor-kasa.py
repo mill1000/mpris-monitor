@@ -155,26 +155,18 @@ if __name__ == "__main__":
 
  # Local functions for monitor callbacks
   def power_on():
-    # Preamp
-    strip.turn_on(index=0)
-    time.sleep(1)
-    # Amp 1
-    strip.turn_on(index=1)
-    time.sleep(1)
-    # Amp 2
-    strip.turn_on(index=2)
-    time.sleep(1)
+    # Preamp = 0
+    # Amp 1 = 1
+    # Amp 2 = 2
+    for i in range(0,3):
+      strip.turn_on(index=i)
+      time.sleep(1)
 
   def power_off():
-    # Amp 2
-    strip.turn_off(index=2)
-    time.sleep(1)
-    # Amp 1
-    strip.turn_off(index=1)
-    time.sleep(1)
-    # Preamp
-    strip.turn_off(index=0)
-    time.sleep(1)
+    # Turn off in reverse order
+    for i in reversed(range(0,3)):
+      strip.turn_off(index=i)
+      time.sleep(1)
 
   # Create system monitor object to handle state
   monitor = SystemMonitor(args.pause_timeout, args.stop_timeout)
