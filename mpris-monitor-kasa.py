@@ -65,7 +65,7 @@ class MprisDbusMonitor(threading.Thread):
 
     logger.debug("'{0}' '{1}' '{2}' '{3}' = '{4}'".format(sender, object, iface, signal, params))
 
-    if self.playback_status_changed:
+    if self.playback_status_changed and "PlaybackStatus" in values:
       self.playback_status_changed(sender, values["PlaybackStatus"])
   
   # Callback for NameOwnerChanged signal
