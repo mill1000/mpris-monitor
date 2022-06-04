@@ -119,6 +119,7 @@ class SystemController():
 
     if state == "Playing":
       # Add the sender to the active list
+      logger.debug("Adding player '{0}' to active list.".format(sender))
       self._active_players.add(sender)
 
       # Activate if necessary
@@ -139,6 +140,7 @@ class SystemController():
     elif state == "Paused":
       # Player is not longer active
       self._active_players.discard(sender)
+      logger.debug("Removed player '{0}' from active list.".format(sender))
 
       # No action unless this is the last player
       if len(self._active_players):
@@ -156,6 +158,7 @@ class SystemController():
     elif state == "Stopped":
       # Player is not longer active
       self._active_players.discard(sender)
+      logger.debug("Removed player '{0}' from active list.".format(sender))
 
       # No action unless this is the last player
       if len(self._active_players):
