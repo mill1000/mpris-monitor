@@ -7,14 +7,14 @@ import time
 import enum
 import threading
 
+# Smart switch control
+import kasa
+import asyncio
+
 # DBus interaction
 import pydbus
 from gi.repository import GLib
 from gi.repository import Gio
-
-# Smart switch control
-import kasa
-import asyncio
 
 class MprisDbusMonitor(threading.Thread):
   def __init__(self):
