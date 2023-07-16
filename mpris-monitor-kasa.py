@@ -46,7 +46,7 @@ class MprisDbusMonitor():
     logger.info("Monitoring for D-Bus signals.")
     self.bus.add_message_handler(_message_handler)    
 
-    self.bus.wait_for_disconnect()
+    await self.bus.wait_for_disconnect()
 
   async def _dbus_get_name_owner(self, name):
     """Get the owner of the provided name."""
