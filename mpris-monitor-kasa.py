@@ -1,82 +1,115 @@
 #! /usr/bin/python3
 
-import threading
 import argparse
 import logging
-import time
 import enum
-import threading
-
-# Smart switch control
 import kasa
 import asyncio
 
-# DBus interaction
-import pydbus
-from gi.repository import GLib
-from gi.repository import Gio
+from dbus_next.aio import MessageBus
+from dbus_next import BusType, Message, MessageType
 
-class MprisDbusMonitor(threading.Thread):
+class MprisDbusMonitor():
+  """A MPRIS monitor based on asyncio via dbus-next."""
   def __init__(self):
-    threading.Thread.__init__(self)
-
     self.friendly_names = {}
     self.playback_status_changed = None
     self.player_removed = None
+    self.bus = None
 
-  def run(self):
-    bus = pydbus.SystemBus()
+  async def start(self):
+    # Connect to the system bus
+    logger.info("Connecting to system bus.")
+    self.bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
-    # Subscribe to MPRIS events
-    bus.subscribe(object="/org/mpris/MediaPlayer2", iface="org.freedesktop.DBus.Properties", signal="PropertiesChanged", signal_fired=self.properties_changed)
-
-    # Subscribe to name changes
-    bus.subscribe(object="/org/freedesktop/DBus", iface="org.freedesktop.DBus", signal="NameOwnerChanged", arg0="org.mpris.MediaPlayer2", flags=Gio.DBusSignalFlags.MATCH_ARG0_NAMESPACE, signal_fired=self.name_owner_changed)
-    
     logger.info("Fetching names from D-Bus.")
-    
-    # Load friendly names from bus
-    obj = bus.get("org.freedesktop.DBus")
-    for name in filter(lambda n: n.startswith("org.mpris.MediaPlayer2"), obj.ListNames()):
-      owner = obj.GetNameOwner(name)
+    for name in filter(lambda n: n.startswith("org.mpris.MediaPlayer2"), await self._dbus_list_names()):
+      owner = await self._dbus_get_name_owner(name)
       self.friendly_names[owner] = name
-      logger.debug("{0} owns {1}.".format(owner, name))
+      logger.debug("%s owns %s.", owner, name)
 
-    # Start the main loop to monitor for events
-    self.loop = GLib.MainLoop()
+    # Add matches for NameOwnerChanged and MRPIS PropertiesChanged signals
+    await self._dbus_add_match(["member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'"])
+    await self._dbus_add_match(["type='signal',member='PropertiesChanged',path='/org/mpris/MediaPlayer2'"])
     
+    # Define a common message handler to filter and call more specific handlers
+    def _message_handler(msg):
+      # logger.debug("Got new DBus message: %s", vars(msg))
+
+      if msg.path == "/org/mpris/MediaPlayer2" and msg.member == "PropertiesChanged":
+        self._properties_changed(msg.sender, msg.interface, msg.member, msg.body)
+
+      if msg.path == "/org/freedesktop/DBus" and msg.member == "NameOwnerChanged":
+        self._name_owner_changed(msg.sender, msg.interface, msg.member, msg.body)
+  
+    # Add handler
     logger.info("Monitoring for D-Bus signals.")
-    try:
-      self.loop.run()
-    except:
-      self.loop.quit()
+    self.bus.add_message_handler(_message_handler)    
 
-  def stop(self):
-    # Stop the Dbus loop
-    if self.loop:
-      self.loop.quit()
+    self.bus.wait_for_disconnect()
 
-  # Callback for PropertiesChanged signal
-  def properties_changed(self, sender, object, iface, signal, params):
-    _interface, values, *remaining = params
+  async def _dbus_get_name_owner(self, name):
+    """Get the owner of the provided name."""
+    reply = await self.bus.call(
+      Message(destination='org.freedesktop.DBus',
+            path='/org/freedesktop/DBus',
+            interface='org.freedesktop.DBus',
+            member='GetNameOwner',
+            signature='s',
+            body=[name]))
+    
+    return reply.body[0]
+
+  async def _dbus_list_names(self):
+    """List names on the bus."""
+    reply = await self.bus.call(
+    Message(destination='org.freedesktop.DBus',
+            path='/org/freedesktop/DBus',
+            interface='org.freedesktop.DBus',
+            member='ListNames'))
+    
+    return reply.body[0]
+  
+  async def _dbus_add_match(self, body):
+    """"Add a match rule on the bus."""
+    reply = await self.bus.call(
+      Message(
+          message_type=MessageType.METHOD_CALL,
+          destination='org.freedesktop.DBus',
+          interface="org.freedesktop.DBus", 
+          path='/org/freedesktop/DBus',
+          member='AddMatch',
+          signature='s',
+          body=body))
+
+    assert reply.message_type == MessageType.METHOD_RETURN
+    return reply
+    
+  def _properties_changed(self, sender, iface, member, body):
+    """Callback for PropertiesChanged signal."""
+    _interface, values, *remaining = body
 
     # Fetch friendly name if it exists
     sender = self.friendly_names.get(sender, sender)
 
-    logger.debug("'{0}' '{1}' '{2}' '{3}' = '{4}'".format(sender, object, iface, signal, params))
+    logger.debug("'%s' '%s' '%s' = '%s'", sender, iface, member, body)
 
     if self.playback_status_changed and "PlaybackStatus" in values:
-      self.playback_status_changed(sender, values["PlaybackStatus"])
-  
-  # Callback for NameOwnerChanged signal
-  def name_owner_changed(self, sender, object, iface, signal, params):
-    name, old_owner, new_owner = params
+      self.playback_status_changed(sender, values["PlaybackStatus"].value)
+
+  def _name_owner_changed(self, sender, iface, member, body):
+    """Callback for NameOwnerChanged signal."""
+    name, old_owner, new_owner = body
     
-    logger.debug("'{0}' '{1}' '{2}' '{3}' = '{4}'".format(sender, object, iface, signal, params))
+    logger.debug("'%s' '%s' '%s' = '%s'", sender, iface, member, body)
 
     # Remove old owner
     if old_owner:
-      del self.friendly_names[old_owner]
+      try:
+        del self.friendly_names[old_owner]
+      except KeyError:
+        # Ignore failed removes
+        pass
       
       if self.player_removed:
         self.player_removed(name)
@@ -84,17 +117,35 @@ class MprisDbusMonitor(threading.Thread):
     # Add new owner
     if new_owner:
       self.friendly_names[new_owner] = name
+
+class AsyncTimer():
+  """A timer class built on asycio."""
+  def __init__(self, timeout, callback):
+    self._timeout = timeout
+    self._callback = callback
+
+  async def _run(self):
+    await asyncio.sleep(self._timeout)
+    await self._callback()
+
+  def start(self):
+    self._task = asyncio.create_task(self._run())
     
+  def cancel(self):
+    self._task.cancel()
+
+
 class SystemController():
+  """Class to manage system state."""
+  
   class State(enum.Enum):
     ACTIVE = 1
     PAUSED = 2
     IDLE = 3
 
-  def __init__(self, loop, short, long):
-    self.async_loop = loop
-    self.short_timeout = short
-    self.long_timeout = long
+  def __init__(self, short_timeout, long_timeout):
+    self.short_timeout = short_timeout
+    self.long_timeout = long_timeout
 
     self.state = SystemController.State.IDLE
     self.timer = None
@@ -112,9 +163,12 @@ class SystemController():
 
   def remove_player(self, sender):
     # Treat removal like a stopped status
-    self.update(sender, "Stopped")
+    asyncio.create_task(self._update(sender, "Stopped"))
   
   def update(self, sender, state):
+    asyncio.create_task(self._update(sender, state))
+
+  async def _update(self, sender, state):
     logger.info("Player '{0}' status: {1}".format(sender, state))
 
     if state == "Playing":
@@ -124,13 +178,13 @@ class SystemController():
 
       # Activate if necessary
       if self.state == SystemController.State.IDLE:
-        self._activate()
+        await self._activate()
 
       # Ensure state is active
       self.state = SystemController.State.ACTIVE
 
       # Disable the shutdown timer if running
-      if self.timer and self.timer.is_alive():
+      if self.timer:
         logger.debug("Disabled shutdown timer.")
         self.timer.cancel()
 
@@ -151,7 +205,7 @@ class SystemController():
 
       # Start shutdown timer with long interval
       logger.debug("Starting long ({0} s) shutdown timer.".format(self.long_timeout))
-      self.timer = threading.Timer(self.long_timeout, self._deactivate)
+      self.timer = AsyncTimer(self.long_timeout, self._deactivate)
       self.timer.start()
       self.state = SystemController.State.PAUSED
 
@@ -173,28 +227,26 @@ class SystemController():
         assert(self.timer)
         self.timer.cancel()
       elif self.timer:
-        # If timer exists, it should be running
-        assert(self.timer.is_alive())
         return
 
       # Start shutdown timer with short interval
       logger.debug("Starting short ({0} s) shutdown timer.".format(self.short_timeout))
-      self.timer = threading.Timer(self.short_timeout, self._deactivate)
+      self.timer = AsyncTimer(self.short_timeout, self._deactivate)
       self.timer.start()
 
-  def _activate(self):
+  async def _activate(self):
     logger.info("Enabling system power.")
 
     if self.activate:
-      asyncio.run_coroutine_threadsafe(self.activate(), self.async_loop)
+      await self.activate()
 
     self.state = SystemController.State.ACTIVE
 
-  def _deactivate(self):
+  async def _deactivate(self):
     logger.info("Disabling system power.")
 
     if self.deactivate:
-      asyncio.run_coroutine_threadsafe(self.deactivate(), self.async_loop)
+      await self.deactivate()
 
     self.state = SystemController.State.IDLE
     
@@ -243,11 +295,8 @@ async def main(args):
       await plug.turn_off()
       await asyncio.sleep(1)
 
-  # Fetch the asyncio loop
-  event_loop = asyncio.get_running_loop()
-
   # Create controller to handle system state
-  controller = SystemController(event_loop, args.stop_timeout, args.pause_timeout)
+  controller = SystemController(args.stop_timeout, args.pause_timeout)
   controller.activate = power_on
   controller.deactivate = power_off
 
@@ -255,12 +304,9 @@ async def main(args):
   mpris_monitor = MprisDbusMonitor()
   mpris_monitor.playback_status_changed = controller.update
   mpris_monitor.player_removed = controller.remove_player
-  mpris_monitor.start()
 
-  # Await indefinitely to allow other asyncio tasks to run
   try:
-    while True:
-      await asyncio.sleep(1)
+      await mpris_monitor.start()
   except:
     pass
 
@@ -268,10 +314,6 @@ async def main(args):
 
   # Stop controller timers
   controller.stop()
-
-  # Stop monitor thread
-  mpris_monitor.stop()
-  mpris_monitor.join()
 
 if __name__ == "__main__":
   # Basic log config
