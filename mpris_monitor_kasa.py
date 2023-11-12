@@ -1,4 +1,4 @@
-#! /usr/bin/python3
+#!/usr/bin/env python3
 
 import argparse
 import logging
@@ -8,6 +8,8 @@ import asyncio
 
 from dbus_next.aio import MessageBus
 from dbus_next import BusType, Message, MessageType
+
+_LOGGER = logging.getLogger("mpris-monitor")
 
 class MprisDbusMonitor():
   """A MPRIS monitor based on asyncio via dbus-next."""
@@ -19,14 +21,14 @@ class MprisDbusMonitor():
 
   async def start(self):
     # Connect to the system bus
-    logger.info("Connecting to system bus.")
+    _LOGGER.info("Connecting to system bus.")
     self.bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
-    logger.info("Fetching names from D-Bus.")
+    _LOGGER.info("Fetching names from D-Bus.")
     for name in filter(lambda n: n.startswith("org.mpris.MediaPlayer2"), await self._dbus_list_names()):
       owner = await self._dbus_get_name_owner(name)
       self.friendly_names[owner] = name
-      logger.debug("%s owns %s.", owner, name)
+      _LOGGER.debug("%s owns %s.", owner, name)
 
     # Add matches for NameOwnerChanged and MRPIS PropertiesChanged signals
     await self._dbus_add_match(["member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'"])
@@ -34,7 +36,7 @@ class MprisDbusMonitor():
     
     # Define a common message handler to filter and call more specific handlers
     def _message_handler(msg):
-      # logger.debug("Got new DBus message: %s", vars(msg))
+      # _LOGGER.debug("Got new DBus message: %s", vars(msg))
 
       if msg.path == "/org/mpris/MediaPlayer2" and msg.member == "PropertiesChanged":
         self._properties_changed(msg.sender, msg.interface, msg.member, msg.body)
@@ -43,7 +45,7 @@ class MprisDbusMonitor():
         self._name_owner_changed(msg.sender, msg.interface, msg.member, msg.body)
   
     # Add handler
-    logger.info("Monitoring for D-Bus signals.")
+    _LOGGER.info("Monitoring for D-Bus signals.")
     self.bus.add_message_handler(_message_handler)    
 
     await self.bus.wait_for_disconnect()
@@ -92,7 +94,7 @@ class MprisDbusMonitor():
     # Fetch friendly name if it exists
     sender = self.friendly_names.get(sender, sender)
 
-    logger.debug("'%s' '%s' '%s' = '%s'", sender, iface, member, body)
+    _LOGGER.debug("'%s' '%s' '%s' = '%s'", sender, iface, member, body)
 
     if self.playback_status_changed and "PlaybackStatus" in values:
       self.playback_status_changed(sender, values["PlaybackStatus"].value)
@@ -101,7 +103,7 @@ class MprisDbusMonitor():
     """Callback for NameOwnerChanged signal."""
     name, old_owner, new_owner = body
     
-    logger.debug("'%s' '%s' '%s' = '%s'", sender, iface, member, body)
+    _LOGGER.debug("'%s' '%s' '%s' = '%s'", sender, iface, member, body)
 
     # Remove old owner
     if old_owner:
@@ -169,11 +171,11 @@ class SystemController():
     asyncio.create_task(self._update(sender, state))
 
   async def _update(self, sender, state):
-    logger.info("Player '{0}' status: {1}".format(sender, state))
+    _LOGGER.info("Player '{0}' status: {1}".format(sender, state))
 
     if state == "Playing":
       # Add the sender to the active list
-      logger.debug("Adding player '{0}' to active list.".format(sender))
+      _LOGGER.debug("Adding player '{0}' to active list.".format(sender))
       self._active_players.add(sender)
 
       # Activate if necessary
@@ -185,7 +187,7 @@ class SystemController():
 
       # Disable the shutdown timer if running
       if self.timer:
-        logger.debug("Disabled shutdown timer.")
+        _LOGGER.debug("Disabled shutdown timer.")
         self.timer.cancel()
 
       # Delete existing timer
@@ -194,7 +196,7 @@ class SystemController():
     elif state == "Paused":
       # Player is not longer active
       self._active_players.discard(sender)
-      logger.debug("Removed player '{0}' from active list.".format(sender))
+      _LOGGER.debug("Removed player '{0}' from active list.".format(sender))
 
       # No action unless this is the last player
       if len(self._active_players):
@@ -204,7 +206,7 @@ class SystemController():
       assert(self.timer == None)
 
       # Start shutdown timer with long interval
-      logger.debug("Starting long ({0} s) shutdown timer.".format(self.long_timeout))
+      _LOGGER.debug("Starting long ({0} s) shutdown timer.".format(self.long_timeout))
       self.timer = AsyncTimer(self.long_timeout, self._deactivate)
       self.timer.start()
       self.state = SystemController.State.PAUSED
@@ -212,7 +214,7 @@ class SystemController():
     elif state == "Stopped":
       # Player is not longer active
       self._active_players.discard(sender)
-      logger.debug("Removed player '{0}' from active list.".format(sender))
+      _LOGGER.debug("Removed player '{0}' from active list.".format(sender))
 
       # No action unless this is the last player
       if len(self._active_players):
@@ -230,12 +232,12 @@ class SystemController():
         return
 
       # Start shutdown timer with short interval
-      logger.debug("Starting short ({0} s) shutdown timer.".format(self.short_timeout))
+      _LOGGER.debug("Starting short ({0} s) shutdown timer.".format(self.short_timeout))
       self.timer = AsyncTimer(self.short_timeout, self._deactivate)
       self.timer.start()
 
   async def _activate(self):
-    logger.info("Enabling system power.")
+    _LOGGER.info("Enabling system power.")
 
     if self.activate:
       await self.activate()
@@ -243,7 +245,7 @@ class SystemController():
     self.state = SystemController.State.ACTIVE
 
   async def _deactivate(self):
-    logger.info("Disabling system power.")
+    _LOGGER.info("Disabling system power.")
 
     if self.deactivate:
       await self.deactivate()
@@ -255,30 +257,30 @@ class SystemController():
       self.timer.cancel()
       self.timer = None
 
-async def main(args):
+async def _run(args):
   # Discover available devices
-  logger.info("Discovering Kasa devices.")
+  _LOGGER.info("Discovering Kasa devices.")
   kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
-  logger.info("Found {0} Kasa devices.".format(len(kasa_devices)))
+  _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
 
   # Dump discovered devices if requested
   if args.discover:
-    logger.info("Discovered Kasa devices:")
+    _LOGGER.info("Discovered Kasa devices:")
     for addr, device in kasa_devices:
-      logger.info(device)
+      _LOGGER.info(device)
     exit()
   
   # Find first device with matching alias
   strip = next((d for a, d in kasa_devices if d.alias == args.kasa_device_alias), None)
 
   if strip is None:
-    logger.error("Could not find Kasa device '{0}'.".format(args.kasa_device_alias))
+    _LOGGER.error("Could not find Kasa device '{0}'.".format(args.kasa_device_alias))
     exit()
 
   # Update strip information
   await strip.update()
 
-  logger.info("Using Kasa device '{0}'.".format(strip.alias))
+  _LOGGER.info("Using Kasa device '{0}'.".format(strip.alias))
 
   # Local coroutines for controller callback
   async def power_on():
@@ -310,15 +312,14 @@ async def main(args):
   except:
     pass
 
-  logger.info("Shutting down.")
+  _LOGGER.info("Shutting down.")
 
   # Stop controller timers
   controller.stop()
 
-if __name__ == "__main__":
+def main():
   # Basic log config
   logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-  logger = logging.getLogger("mpris-monitor")
 
   # Argument parsing
   parser = argparse.ArgumentParser(description="Automate system power by subscribing to MPRIS D-Bus signals.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -330,13 +331,16 @@ if __name__ == "__main__":
   args = parser.parse_args()
   
   if args.verbose:
-    logger.setLevel(logging.DEBUG)
+    _LOGGER.setLevel(logging.DEBUG)
 
   if args.discover == False and args.kasa_device_alias is None:
-    logger.error("Target Kasa device alias must be supplied.")
+    _LOGGER.error("Target Kasa device alias must be supplied.")
     exit()
   
   try:
-    asyncio.run(main(args))
+    asyncio.run(_run(args))
   except KeyboardInterrupt:
     pass
+
+if __name__ == "__main__":
+  main()

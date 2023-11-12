@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpris-monitor-kasa"
+description = "Monitor the system D-Bus for MPRIS events and control Kasa switches."
+version = "1.0.0"
+readme = "README.md"
+authors = [
+  {name = "Tucker Kern", email = "tuckkern@gmail.com"},
+]
+requires-python = ">=3.8"
+license = {text = "MIT"}
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Home Automation"
+]
+dependencies = [
+  "dbus-next",
+  "python-kasa"
+]
+
+[project.urls]
+Repository = "https://github.com/mill1000/mpris-monitor"
+Issues = "https://github.com/mill1000/mpris-monitor/issues"
+
+[project.scripts]
+mpris-monitor-kasa = "mpris_monitor_kasa:main"
+
+[tool.setuptools]
+py-modules = ["mpris_monitor_kasa"]
