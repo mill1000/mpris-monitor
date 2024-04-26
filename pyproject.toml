@@ -24,7 +24,8 @@ classifiers = [
 ]
 dependencies = [
   "dbus-next",
-  "python-kasa"
+  "python-kasa",
+  "rpi_ws281x"
 ]
 
 [project.urls]

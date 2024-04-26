@@ -8,9 +8,15 @@ import logging
 import kasa
 from dbus_next import BusType, Message, MessageType
 from dbus_next.aio import MessageBus
+from rpi_ws281x import PixelStrip, Color
 
 _LOGGER = logging.getLogger("mpris-monitor")
 
+COLOR_RED = Color(255, 0, 0)
+COLOR_GREEN = Color(0, 255, 0)
+COLOR_BLUE = Color(0, 0, 255)
+COLOR_YELLOW = Color(255, 255, 0)
+COLOR_OFF = Color(0, 0, 0)
 
 class MprisDbusMonitor():
     """A MPRIS monitor based on asyncio via dbus-next."""
@@ -162,6 +168,10 @@ class SystemController():
         self.activate = None
         self.deactivate = None
 
+        self.on_playing = None
+        self.on_pause_timer = None
+        self.on_stop_timer = None
+
         self._active_players = set()
 
     def stop(self):
@@ -296,6 +306,10 @@ async def _run(args):
 
     _LOGGER.info("Using Kasa device '{0}'.".format(strip.alias))
 
+    # Setup the LED
+    led = PixelStrip(1, 12)
+    led.begin()
+
     # Local coroutines for controller callback
     async def power_on():
         # Preamp = 0
@@ -311,10 +325,26 @@ async def _run(args):
             await plug.turn_off()
             await asyncio.sleep(1)
 
+        # Disable LED
+        led.setPixelColor(0, COLOR_OFF)
+
+    def on_playing():
+        led.setPixelColor(0, COLOR_GREEN)
+
+    def on_pause_timer():
+        led.setPixelColor(0, COLOR_YELLOW)
+
+    def on_stop_timer():
+        led.setPixelColor(0, COLOR_RED)
+
     # Create controller to handle system state
     controller = SystemController(args.stop_timeout, args.pause_timeout)
     controller.activate = power_on
     controller.deactivate = power_off
+    # Add LED callbacks
+    controller.on_playing = on_playing
+    controller.on_pause_timer = on_pause_timer
+    controller.on_stop_timer = on_stop_timer
 
     # Start the MPRIS monitor
     mpris_monitor = MprisDbusMonitor()
