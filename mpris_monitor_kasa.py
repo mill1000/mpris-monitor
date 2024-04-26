@@ -210,6 +210,10 @@ class SystemController():
             # Delete existing timer
             self.timer = None
 
+            # Call callback
+            if self.on_playing:
+                self.on_playing()
+
         elif state == "Paused":
             # Player is not longer active
             self._active_players.discard(sender)
@@ -229,6 +233,10 @@ class SystemController():
             self.timer = AsyncTimer(self.long_timeout, self._deactivate)
             self.timer.start()
             self.state = SystemController.State.PAUSED
+
+            # Call callback
+            if self.on_pause_timer:
+                self.on_pause_timer()
 
         elif state == "Stopped":
             # Player is not longer active
@@ -256,6 +264,10 @@ class SystemController():
                 "Starting short ({0} s) shutdown timer.".format(self.short_timeout))
             self.timer = AsyncTimer(self.short_timeout, self._deactivate)
             self.timer.start()
+
+            # Call callback
+            if self.on_stop_timer:
+                self.on_stop_timer()
 
     async def _activate(self):
         _LOGGER.info("Enabling system power.")
