@@ -4,19 +4,18 @@ import argparse
 import asyncio
 import enum
 import logging
+import time
 
 import kasa
 from dbus_next import BusType, Message, MessageType
 from dbus_next.aio import MessageBus
 from rpi_ws281x import PixelStrip, Color
+from gpiozero import Button
 
 _LOGGER = logging.getLogger("mpris-monitor")
 
-COLOR_RED = Color(255, 0, 0)
-COLOR_GREEN = Color(0, 255, 0)
-COLOR_BLUE = Color(0, 0, 255)
-COLOR_YELLOW = Color(255, 255, 0)
-COLOR_OFF = Color(0, 0, 0)
+_TURNTABLE_PLAYER_NAME = "org.mpris.MediaPlayer2.Turntable"
+
 
 class MprisDbusMonitor():
     """A MPRIS monitor based on asyncio via dbus-next."""
@@ -159,12 +158,17 @@ class SystemController():
         IDLE = 3
 
     def __init__(self, short_timeout, long_timeout):
-        self.short_timeout = short_timeout
-        self.long_timeout = long_timeout
+        # Save running loop
+        self._loop = asyncio.get_running_loop()
 
-        self.state = SystemController.State.IDLE
-        self.timer = None
+        self._short_timeout = short_timeout
+        self._long_timeout = long_timeout
 
+        self._state = SystemController.State.IDLE
+        self._active_players = set()
+        self._timer = None
+
+        # Callbacks
         self.activate = None
         self.deactivate = None
 
@@ -172,22 +176,28 @@ class SystemController():
         self.on_pause_timer = None
         self.on_stop_timer = None
 
-        self._active_players = set()
+    async def _activate(self):
+        _LOGGER.info("Enabling system power.")
 
-    def stop(self):
+        if self.activate:
+            await self.activate()
+
+        self._state = SystemController.State.ACTIVE
+
+    async def _deactivate(self):
+        _LOGGER.info("Disabling system power.")
+
+        if self.deactivate:
+            await self.deactivate()
+
+        self._state = SystemController.State.IDLE
+
         # Stop and destroy timer if present
-        if self.timer:
-            self.timer.cancel()
-            self.timer = None
+        if self._timer:
+            self._timer.cancel()
+            self._timer = None
 
-    def remove_player(self, sender):
-        # Treat removal like a stopped status
-        asyncio.create_task(self._update(sender, "Stopped"))
-
-    def update(self, sender, state):
-        asyncio.create_task(self._update(sender, state))
-
-    async def _update(self, sender, state):
+    async def _update_async(self, sender, state):
         _LOGGER.info("Player '{0}' status: {1}".format(sender, state))
 
         if state == "Playing":
@@ -196,19 +206,19 @@ class SystemController():
             self._active_players.add(sender)
 
             # Activate if necessary
-            if self.state == SystemController.State.IDLE:
+            if self._state == SystemController.State.IDLE:
                 await self._activate()
 
             # Ensure state is active
-            self.state = SystemController.State.ACTIVE
+            self._state = SystemController.State.ACTIVE
 
             # Disable the shutdown timer if running
-            if self.timer:
+            if self._timer:
                 _LOGGER.debug("Disabled shutdown timer.")
-                self.timer.cancel()
+                self._timer.cancel()
 
             # Delete existing timer
-            self.timer = None
+            self._timer = None
 
             # Call callback
             if self.on_playing:
@@ -224,15 +234,16 @@ class SystemController():
             if len(self._active_players):
                 return
 
-            # Shouldn't have a timer unless we somehow went from STOPPED to PAUSED
-            assert (self.timer == None)
+            # Nothing to do if already idle
+            if self._state == SystemController.State.IDLE:
+                return
 
             # Start shutdown timer with long interval
             _LOGGER.debug(
-                "Starting long ({0} s) shutdown timer.".format(self.long_timeout))
-            self.timer = AsyncTimer(self.long_timeout, self._deactivate)
-            self.timer.start()
-            self.state = SystemController.State.PAUSED
+                "Starting long ({0} s) shutdown timer.".format(self._long_timeout))
+            self._timer = AsyncTimer(self._long_timeout, self._deactivate)
+            self._timer.start()
+            self._state = SystemController.State.PAUSED
 
             # Call callback
             if self.on_pause_timer:
@@ -249,46 +260,79 @@ class SystemController():
                 return
 
             # Nothing to do if already idle
-            if self.state == SystemController.State.IDLE:
+            if self._state == SystemController.State.IDLE:
                 return
 
-            if self.state == SystemController.State.PAUSED:
+            if self._state == SystemController.State.PAUSED:
                 # Cancel existing long timer
-                assert (self.timer)
-                self.timer.cancel()
-            elif self.timer:
+                assert (self._timer)
+                self._timer.cancel()
+            elif self._timer:
                 return
 
             # Start shutdown timer with short interval
             _LOGGER.debug(
-                "Starting short ({0} s) shutdown timer.".format(self.short_timeout))
-            self.timer = AsyncTimer(self.short_timeout, self._deactivate)
-            self.timer.start()
+                "Starting short ({0} s) shutdown timer.".format(self._short_timeout))
+            self._timer = AsyncTimer(self._short_timeout, self._deactivate)
+            self._timer.start()
 
             # Call callback
             if self.on_stop_timer:
                 self.on_stop_timer()
 
-    async def _activate(self):
-        _LOGGER.info("Enabling system power.")
-
-        if self.activate:
-            await self.activate()
-
-        self.state = SystemController.State.ACTIVE
-
-    async def _deactivate(self):
-        _LOGGER.info("Disabling system power.")
-
-        if self.deactivate:
-            await self.deactivate()
-
-        self.state = SystemController.State.IDLE
-
+    def shutdown(self):
         # Stop and destroy timer if present
-        if self.timer:
-            self.timer.cancel()
-            self.timer = None
+        if self._timer:
+            self._timer.cancel()
+            self._timer = None
+
+    def update(self, sender, state):
+        # Ensure update task runs in the loop
+        asyncio.run_coroutine_threadsafe(
+            self._update_async(sender, state), self._loop)
+
+    def remove_player(self, sender):
+        # Treat removal like a stopped status
+        self.update(sender, "Stopped")
+
+    @property
+    def active_players(self):
+        return self._active_players
+
+
+class LED():
+    """Class to simplify LED control."""
+
+    # TODO Enum?
+    COLOR_OFF = Color(0, 0, 0)
+    COLOR_RED = Color(255, 0, 0)
+    COLOR_YELLOW = Color(255, 255, 0)
+    COLOR_BLUE = Color(0, 0, 255)
+    COLOR_GREEN = Color(0, 255, 0)
+
+    def __init__(self, gpio):
+        # Setup the LED driver
+        self._led = PixelStrip(1, gpio)
+        self._led.begin()
+
+    def _set_color(self, color):
+        self._led.setPixelColor(0, color)
+        self._led.show()
+
+    def off(self):
+        self._set_color(LED.COLOR_OFF)
+
+    def red(self):
+        self._set_color(LED.COLOR_RED)
+
+    def yellow(self):
+        self._set_color(LED.COLOR_YELLOW)
+
+    def blue(self):
+        self._set_color(LED.COLOR_BLUE)
+
+    def green(self):
+        self._set_color(LED.COLOR_GREEN)
 
 
 async def _run(args):
@@ -319,8 +363,8 @@ async def _run(args):
     _LOGGER.info("Using Kasa device '{0}'.".format(strip.alias))
 
     # Setup the LED
-    led = PixelStrip(1, 12)
-    led.begin()
+    led = LED(12)  # PWM
+    led.off()
 
     # Local coroutines for controller callback
     async def power_on():
@@ -337,17 +381,15 @@ async def _run(args):
             await plug.turn_off()
             await asyncio.sleep(1)
 
-        # Disable LED
-        led.setPixelColor(0, COLOR_OFF)
+        # Turn off LED
+        led.off()
 
     def on_playing():
-        led.setPixelColor(0, COLOR_GREEN)
-
-    def on_pause_timer():
-        led.setPixelColor(0, COLOR_YELLOW)
-
-    def on_stop_timer():
-        led.setPixelColor(0, COLOR_RED)
+        # If turntable is active indicate with the LED
+        if _TURNTABLE_PLAYER_NAME in controller.active_players:
+            led.green()
+        else:
+            led.blue()
 
     # Create controller to handle system state
     controller = SystemController(args.stop_timeout, args.pause_timeout)
@@ -355,8 +397,38 @@ async def _run(args):
     controller.deactivate = power_off
     # Add LED callbacks
     controller.on_playing = on_playing
-    controller.on_pause_timer = on_pause_timer
-    controller.on_stop_timer = on_stop_timer
+    controller.on_pause_timer = led.yellow
+    controller.on_stop_timer = led.red
+
+    # Setup external button control
+    def button_pressed(device):
+        # Wait to see if button gets released, or if it's being held
+        time.sleep(.25)
+        if device.is_pressed:
+            return
+
+        _LOGGER.debug("Button was pressed.")
+
+        # When button is pressed remove/add turntable as player
+        if _TURNTABLE_PLAYER_NAME not in controller.active_players:
+            controller.update(_TURNTABLE_PLAYER_NAME, "Playing")
+        else:
+            controller.update(_TURNTABLE_PLAYER_NAME, "Stopped")
+
+            # Set LED to blue in case any other players are active
+            led.blue()
+
+    def button_held():
+        _LOGGER.debug("Button was held.")
+
+        # Remove all players
+        for player in controller.active_players:
+            controller.remove_player(player)
+
+    # Setup button
+    button = Button(16, bounce_time=.1)
+    button.when_pressed = button_pressed
+    button.when_held = button_held
 
     # Start the MPRIS monitor
     mpris_monitor = MprisDbusMonitor()
@@ -371,7 +443,10 @@ async def _run(args):
     _LOGGER.info("Shutting down.")
 
     # Stop controller timers
-    controller.stop()
+    controller.shutdown()
+
+    # Clear LED
+    led.off()
 
 
 def main():
