@@ -25,7 +25,9 @@ classifiers = [
 dependencies = [
   "dbus-next",
   "python-kasa",
-  "rpi_ws281x"
+  "rpi_ws281x",
+  "gpiozero",
+  "lgpio"
 ]
 
 [project.urls]
