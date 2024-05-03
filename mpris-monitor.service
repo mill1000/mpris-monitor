@@ -1,0 +1,13 @@
+[Unit]
+Description=mpris-monitor
+After=dbus.service network-online.target
+Wants=dbus.service network-online.target
+
+[Service]
+ExecStart=/home/pi/.local/bin/mpris-monitor-kasa --pause_timeout=300 --stop_timeout=10 'TP-LINK_Power Strip_E705'
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mpris-monitor
+
+[Install]
+WantedBy=multi-user.target
