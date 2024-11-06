@@ -9,8 +9,8 @@ import time
 import kasa
 from dbus_next import BusType, Message, MessageType
 from dbus_next.aio import MessageBus
-from rpi_ws281x import PixelStrip, Color
 from gpiozero import Button
+from rpi_ws281x import Color, PixelStrip
 
 _LOGGER = logging.getLogger("mpris-monitor")
 
