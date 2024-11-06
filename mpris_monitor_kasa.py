@@ -335,32 +335,35 @@ class LED():
         self._set_color(LED.COLOR_GREEN)
 
 
-async def _run(args):
-    # Discover available devices
-    _LOGGER.info("Discovering Kasa devices.")
-    kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
-    _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
+async def _run(args) -> None:
 
     # Dump discovered devices if requested
     if args.discover:
+        _LOGGER.info("Discovering Kasa devices.")
+        kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
+    
+        _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
+
         _LOGGER.info("Discovered Kasa devices:")
-        for addr, device in kasa_devices:
+        for _, device in kasa_devices:
             _LOGGER.info(device)
         exit()
 
-    # Find first device with matching alias
-    strip = next((d for a, d in kasa_devices if d.alias ==
-                 args.kasa_device_alias), None)
+    # Discover available devices
+    _LOGGER.info("Discovering Kasa device at %s.", args.host)
+    strip = await kasa.Discover.discover_single(args.host)
 
-    if strip is None:
-        _LOGGER.error("Could not find Kasa device '{0}'.".format(
-            args.kasa_device_alias))
-        exit()
+    # _LOGGER.info("Found Kasa device %s.", strip)
+
+    # if strip is None:
+    #     _LOGGER.error("Could not find Kasa device '{0}'.".format(
+    #         args.kasa_device_alias))
+    #     exit()
 
     # Update strip information
     await strip.update()
 
-    _LOGGER.info("Using Kasa device '{0}'.".format(strip.alias))
+    _LOGGER.info("Found Kasa device '%s' @ %s.", strip.alias, args.host)
 
     # Setup the LED
     led = LED(12)  # PWM
@@ -465,15 +468,15 @@ def main():
         "--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
     parser.add_argument(
         "--verbose", help="Enable debug messages.", action="store_true")
-    parser.add_argument("kasa_device_alias",
-                        help="Kasa device to control.", nargs="?", default=None)
+    parser.add_argument("host",
+                        help="Kasa device IP or hostname.", nargs="?", default=None)
     args = parser.parse_args()
 
     if args.verbose:
         _LOGGER.setLevel(logging.DEBUG)
 
-    if args.discover == False and args.kasa_device_alias is None:
-        _LOGGER.error("Target Kasa device alias must be supplied.")
+    if args.discover == False and args.host is None:
+        _LOGGER.error("Kasa device IP or hostname must be supplied.")
         exit()
 
     try:
