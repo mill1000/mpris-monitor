@@ -336,29 +336,24 @@ class LED():
 
 
 async def _run(args) -> None:
-
     # Dump discovered devices if requested
     if args.discover:
         _LOGGER.info("Discovering Kasa devices.")
         kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
     
         _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
-
-        _LOGGER.info("Discovered Kasa devices:")
         for _, device in kasa_devices:
             _LOGGER.info(device)
+
         exit()
 
     # Discover available devices
     _LOGGER.info("Discovering Kasa device at %s.", args.host)
-    strip = await kasa.Discover.discover_single(args.host)
-
-    # _LOGGER.info("Found Kasa device %s.", strip)
-
-    # if strip is None:
-    #     _LOGGER.error("Could not find Kasa device '{0}'.".format(
-    #         args.kasa_device_alias))
-    #     exit()
+    try:
+        strip = await kasa.Discover.discover_single(args.host)
+    except kasa.exceptions.SmartDeviceException as ex:
+        _LOGGER.error("Could not connect to Kasa device at %s. Error: %s", args.host, ex)
+        exit()
 
     # Update strip information
     await strip.update()
