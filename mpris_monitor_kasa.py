@@ -340,7 +340,7 @@ async def _run(args) -> None:
     if args.discover:
         _LOGGER.info("Discovering Kasa devices.")
         kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
-    
+
         _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
         for _, device in kasa_devices:
             _LOGGER.info(device)
@@ -352,7 +352,8 @@ async def _run(args) -> None:
     try:
         strip = await kasa.Discover.discover_single(args.host)
     except kasa.exceptions.SmartDeviceException as ex:
-        _LOGGER.error("Could not connect to Kasa device at %s. Error: %s", args.host, ex)
+        _LOGGER.error(
+            "Could not connect to Kasa device at %s. Error: %s", args.host, ex)
         exit()
 
     # Update strip information
