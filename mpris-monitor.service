@@ -4,7 +4,7 @@ After=dbus.service network-online.target
 Wants=dbus.service network-online.target
 
 [Service]
-ExecStart=/home/pi/.local/bin/mpris-monitor-kasa --pause_timeout=300 --stop_timeout=10 'TP-LINK_Power Strip_E705'
+ExecStart=/home/pi/.local/bin/mpris-monitor-kasa --pause-timeout=300 --stop-timeout=10 kp303.lan
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mpris-monitor

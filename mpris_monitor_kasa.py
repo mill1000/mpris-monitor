@@ -453,12 +453,12 @@ def main():
         format='%(levelname)s: %(message)s', level=logging.INFO)
 
     # Argument parsing
-    parser = argparse.ArgumentParser(description="Automate system power by subscribing to MPRIS D-Bus signals.",
+    parser = argparse.ArgumentParser(description="Monitor the system D-Bus for MPRIS signals and control a Kasa switch.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
-        "--pause_timeout", help="Disable system power when paused for this duration (seconds).", default=60, type=int)
+        "--pause-timeout", help="Disable system power when paused for this duration (seconds).", default=60, type=int)
     parser.add_argument(
-        "--stop_timeout", help="Disable system power when stopped for this duration (seconds).", default=5, type=int)
+        "--stop-timeout", help="Disable system power when stopped for this duration (seconds).", default=5, type=int)
     parser.add_argument(
         "--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
     parser.add_argument(
