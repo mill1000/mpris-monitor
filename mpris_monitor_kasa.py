@@ -351,7 +351,7 @@ async def _run(args) -> None:
     _LOGGER.info("Discovering Kasa device at %s.", args.host)
     try:
         strip = await kasa.Discover.discover_single(args.host)
-    except kasa.exceptions.SmartDeviceException as ex:
+    except kasa.exceptions.KasaException as ex:
         _LOGGER.error(
             "Could not connect to Kasa device at %s. Error: %s", args.host, ex)
         exit()
