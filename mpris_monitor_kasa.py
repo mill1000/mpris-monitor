@@ -5,6 +5,7 @@ import asyncio
 import enum
 import logging
 import time
+from typing import Optional
 
 import kasa
 from dbus_next import BusType, Message, MessageType
@@ -222,7 +223,7 @@ class SystemController():
 
             # Call callback
             if self.on_playing:
-                self.on_playing()
+                await self.on_playing()
 
         elif state == "Paused":
             # Player is not longer active
@@ -335,66 +336,89 @@ class LED():
         self._set_color(LED.COLOR_GREEN)
 
 
-async def _run(args) -> None:
-    # Dump discovered devices if requested
-    if args.discover:
-        _LOGGER.info("Discovering Kasa devices.")
-        kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
-
-        _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
-        for _, device in kasa_devices:
-            _LOGGER.info(device)
-
-        exit()
-
+async def _get_kasa_device(host) -> Optional[kasa.Device]:
     # Discover available devices
-    _LOGGER.info("Discovering Kasa device at %s.", args.host)
+    _LOGGER.info("Discovering Kasa device at %s.", host)
     try:
-        strip = await kasa.Discover.discover_single(args.host)
+        dev = await kasa.Discover.discover_single(host)
     except kasa.exceptions.KasaException as ex:
         _LOGGER.error(
-            "Could not connect to Kasa device at %s. Error: %s", args.host, ex)
-        exit()
+            "Could not connect to Kasa device at %s. Error: %s", host, ex)
+        return None
 
     # Update strip information
-    await strip.update()
+    await dev.update()
 
-    _LOGGER.info("Found Kasa device '%s' @ %s.", strip.alias, args.host)
+    _LOGGER.info("Found Kasa device '%s' @ %s.", dev.alias, host)
 
+    return dev
+
+
+async def _discover(args) -> None:
+    # Dump discovered devices if requested
+    _LOGGER.info("Discovering Kasa devices.")
+    kasa_devices = (await kasa.Discover.discover(timeout=1)).items()
+
+    _LOGGER.info("Found {0} Kasa devices.".format(len(kasa_devices)))
+    for _, device in kasa_devices:
+        _LOGGER.info(device)
+
+    exit()
+
+
+async def _run(args) -> None:
     # Setup the LED
     led = LED(12)  # PWM
     led.off()
+
+    # Get power strip
+    strip = await _get_kasa_device(args.strip)
+    if strip is None:
+        exit()
+
+    # Get plug
+    plug = None
+    if args.plug:
+        plug = await _get_kasa_device(args.plug)
+        if plug is None:
+            exit()
 
     # Local coroutines for controller callback
     async def power_on():
         # Preamp = 0
         # Amp 1 = 1
         # Amp 2 = 2
-        for plug in strip.children:
-            await plug.turn_on()
+        for p in strip.children:
+            await p.turn_on()
             await asyncio.sleep(1)
 
     async def power_off():
         # Turn off in reverse order
-        for plug in reversed(strip.children):
-            await plug.turn_off()
+        for p in reversed(strip.children):
+            await p.turn_off()
             await asyncio.sleep(1)
 
         # Turn off LED
         led.off()
 
-    def on_playing():
-        # If turntable is active indicate with the LED
+    async def on_playing():
+        # Handle table LED and preamp
         if _TURNTABLE_PLAYER_NAME in controller.active_players:
             led.green()
+            # Turn on the preamp
+            if plug and not plug.is_on:
+                await plug.turn_on()
         else:
             led.blue()
+            # Turn off the preamp
+            if plug and plug.is_on:
+                await plug.turn_off()
 
     # Create controller to handle system state
     controller = SystemController(args.stop_timeout, args.pause_timeout)
+    # Add callbacks
     controller.activate = power_on
     controller.deactivate = power_off
-    # Add LED callbacks
     controller.on_playing = on_playing
     controller.on_pause_timer = led.yellow
     controller.on_stop_timer = led.red
@@ -436,7 +460,8 @@ async def _run(args) -> None:
 
     try:
         await mpris_monitor.start()
-    except:
+    except Exception as e:
+        _LOGGER.error(e)
         pass
 
     _LOGGER.info("Shutting down.")
@@ -457,21 +482,29 @@ def main():
     parser = argparse.ArgumentParser(description="Monitor the system D-Bus for MPRIS signals and control a Kasa switch.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
-        "--pause-timeout", help="Disable system power when paused for this duration (seconds).", default=60, type=int)
-    parser.add_argument(
-        "--stop-timeout", help="Disable system power when stopped for this duration (seconds).", default=5, type=int)
+        "--verbose", help="Enable debug messages.", action="store_true")
     parser.add_argument(
         "--discover", help="List Kasa devices discovered on the network and exit.", action="store_true")
     parser.add_argument(
-        "--verbose", help="Enable debug messages.", action="store_true")
-    parser.add_argument("host",
-                        help="Kasa device IP or hostname.", nargs="?", default=None)
+        "--pause-timeout", help="Disable system power when paused for this duration (seconds).", default=60, type=int)
+    parser.add_argument(
+        "--stop-timeout", help="Disable system power when stopped for this duration (seconds).", default=5, type=int)
+    parser.add_argument("strip",
+                        help="Kasa strip IP or hostname.", nargs="?", default=None)
+    parser.add_argument("plug",
+                        help="Kasa plug IP or hostname.", nargs="?", default=None)
     args = parser.parse_args()
 
     if args.verbose:
         _LOGGER.setLevel(logging.DEBUG)
 
-    if args.discover == False and args.host is None:
+    if args.discover:
+        try:
+            asyncio.run(_discover(args))
+        except KeyboardInterrupt:
+            exit()
+
+    if args.strip is None:
         _LOGGER.error("Kasa device IP or hostname must be supplied.")
         exit()
 
