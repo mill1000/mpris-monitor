@@ -4,7 +4,7 @@ After=dbus.service network-online.target
 Wants=dbus.service network-online.target
 
 [Service]
-ExecStart=/home/pi/.local/bin/mpris-monitor-kasa --pause-timeout=300 --stop-timeout=30 kp303.lan
+ExecStart=/home/pi/.local/bin/mpris-monitor-kasa --pause-timeout=300 --stop-timeout=30 kp303.lan ep10-9a1c.lan
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mpris-monitor
