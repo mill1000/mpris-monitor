@@ -6,6 +6,7 @@ import enum
 import logging
 import time
 from typing import Optional
+from enum import StrEnum
 
 import kasa
 from dbus_next import BusType, Message, MessageType
@@ -16,6 +17,12 @@ from rpi_ws281x import Color, PixelStrip
 _LOGGER = logging.getLogger("mpris-monitor")
 
 _TURNTABLE_PLAYER_NAME = "org.mpris.MediaPlayer2.Turntable"
+
+
+class PlayerState(StrEnum):
+    STOPPED = "Stopped"
+    PAUSED = "Paused"
+    PLAYING = "Playing"
 
 
 class MprisDbusMonitor():
@@ -173,10 +180,8 @@ class SystemController():
         self.activate = None
         self.deactivate = None
         self.on_state = None
-        self.on_pause_timer = None
-        self.on_stop_timer = None
 
-    async def _activate(self):
+    async def _activate(self) -> None:
         _LOGGER.info("Enabling system power.")
 
         if self.activate:
@@ -184,7 +189,7 @@ class SystemController():
 
         self._state = SystemController.State.ACTIVE
 
-    async def _deactivate(self):
+    async def _deactivate(self) -> None:
         _LOGGER.info("Disabling system power.")
 
         if self.deactivate:
@@ -198,7 +203,7 @@ class SystemController():
             self._timer = None
 
     async def _update_state(self, sender, state) -> None:
-        if state == "Playing":
+        if state == PlayerState.PLAYING:
             # Add the sender to the active list
             _LOGGER.debug("Adding player '{0}' to active list.".format(sender))
             self._active_players.add(sender)
@@ -218,7 +223,7 @@ class SystemController():
             # Delete existing timer
             self._timer = None
 
-        elif state == "Paused":
+        elif state == PlayerState.PAUSED:
             # Player is not longer active
             self._active_players.discard(sender)
             _LOGGER.debug(
@@ -239,11 +244,7 @@ class SystemController():
             self._timer.start()
             self._state = SystemController.State.PAUSED
 
-            # Call callback
-            if self.on_pause_timer:
-                self.on_pause_timer()
-
-        elif state == "Stopped":
+        elif state == PlayerState.STOPPED:
             # Player is not longer active
             self._active_players.discard(sender)
             _LOGGER.debug(
@@ -270,11 +271,7 @@ class SystemController():
             self._timer = AsyncTimer(self._short_timeout, self._deactivate)
             self._timer.start()
 
-            # Call callback
-            if self.on_stop_timer:
-                self.on_stop_timer()
-
-    async def _update_async(self, sender, state):
+    async def _update_async(self, sender, state: PlayerState) -> None:
         _LOGGER.info("Player '{0}' status: {1}".format(sender, state))
         await self._update_state(sender, state)
 
@@ -295,7 +292,7 @@ class SystemController():
 
     def remove_player(self, sender):
         # Treat removal like a stopped status
-        self.update(sender, "Stopped")
+        self.update(sender, PlayerState.STOPPED)
 
     @property
     def active_players(self):
@@ -408,31 +405,36 @@ async def _run(args) -> None:
         # Turn off LED
         led.off()
 
-    async def on_state(state) -> None:
+    async def on_state(state: PlayerState) -> None:
         # Handle table LED and preamp
-        if _TURNTABLE_PLAYER_NAME in controller.active_players:
-            led.green()
+        if state == PlayerState.PLAYING:
+            if _TURNTABLE_PLAYER_NAME in controller.active_players:
+                led.green()
 
-            # Turn on the preamp
-            if plug:
-                if not plug.is_on:
-                    _LOGGER.info("Turning on turntable preamp.")
-                    await plug.turn_on()
+                # Turn on the preamp
+                if plug:
+                    if not plug.is_on:
+                        _LOGGER.info("Turning on turntable preamp.")
+                        await plug.turn_on()
 
-                # Update plug state
-                await plug.update()
+                    # Update plug state
+                    await plug.update()
 
-        else:
-            led.blue()
+            else:
+                led.blue()
 
-            # Turn off the preamp
-            if plug:
-                if plug.is_on:
-                    _LOGGER.info("Turning off turntable preamp.")
-                    await plug.turn_off()
+                # Turn off the preamp
+                if plug:
+                    if plug.is_on:
+                        _LOGGER.info("Turning off turntable preamp.")
+                        await plug.turn_off()
 
-                # Update plug state
-                await plug.update()
+                    # Update plug state
+                    await plug.update()
+        elif state == PlayerState.PAUSED:
+            led.yellow()
+        elif state == PlayerState.STOPPED:
+            led.red()
 
     # Create controller to handle system state
     controller = SystemController(args.stop_timeout, args.pause_timeout)
@@ -440,8 +442,6 @@ async def _run(args) -> None:
     controller.activate = power_on
     controller.deactivate = power_off
     controller.on_state = on_state
-    controller.on_pause_timer = led.yellow
-    controller.on_stop_timer = led.red
 
     # Setup external button control
     def button_pressed(device):
@@ -454,9 +454,9 @@ async def _run(args) -> None:
 
         # When button is pressed remove/add turntable as player
         if _TURNTABLE_PLAYER_NAME not in controller.active_players:
-            controller.update(_TURNTABLE_PLAYER_NAME, "Playing")
+            controller.update(_TURNTABLE_PLAYER_NAME, PlayerState.PLAYING)
         else:
-            controller.update(_TURNTABLE_PLAYER_NAME, "Stopped")
+            controller.update(_TURNTABLE_PLAYER_NAME, PlayerState.STOPPED)
 
             # Set LED to blue in case any other players are active
             led.blue()
