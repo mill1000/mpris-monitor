@@ -5,8 +5,8 @@ import asyncio
 import enum
 import logging
 import time
-from typing import Optional
 from enum import StrEnum
+from typing import Optional
 
 import kasa
 from dbus_next import BusType, Message, MessageType
