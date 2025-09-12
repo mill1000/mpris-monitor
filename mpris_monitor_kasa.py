@@ -179,7 +179,10 @@ class SystemController():
         # Callbacks
         self.activate = None
         self.deactivate = None
-        self.on_state = None
+        self.on_player_state = None
+        self.on_playing = None
+        self.on_pause = None
+        self.on_stopping = None
 
     async def _activate(self) -> None:
         _LOGGER.info("Enabling system power.")
@@ -202,7 +205,7 @@ class SystemController():
             self._timer.cancel()
             self._timer = None
 
-    async def _update_state(self, sender, state) -> None:
+    async def _update_state(self, sender: str, state: PlayerState) -> None:
         if state == PlayerState.PLAYING:
             # Add the sender to the active list
             _LOGGER.debug("Adding player '{0}' to active list.".format(sender))
@@ -222,6 +225,10 @@ class SystemController():
 
             # Delete existing timer
             self._timer = None
+
+            # Run callback
+            if self.on_playing:
+                self.on_playing()
 
         elif state == PlayerState.PAUSED:
             # Player is not longer active
@@ -243,6 +250,10 @@ class SystemController():
             self._timer = AsyncTimer(self._long_timeout, self._deactivate)
             self._timer.start()
             self._state = SystemController.State.PAUSED
+
+            # Run callback
+            if self.on_pause:
+                self.on_pause()
 
         elif state == PlayerState.STOPPED:
             # Player is not longer active
@@ -271,13 +282,16 @@ class SystemController():
             self._timer = AsyncTimer(self._short_timeout, self._deactivate)
             self._timer.start()
 
+            # Run callback
+            if self.on_stopping:
+                self.on_stopping()
+
     async def _update_async(self, sender, state: PlayerState) -> None:
         _LOGGER.info("Player '{0}' status: {1}".format(sender, state))
         await self._update_state(sender, state)
 
-        # Call callback
-        if self.on_state:
-            await self.on_state(state)
+        if self.on_player_state:
+            await self.on_player_state(sender, state)
 
     def shutdown(self):
         # Stop and destroy timer if present
@@ -382,7 +396,7 @@ async def _run(args) -> None:
             exit()
 
     # Local coroutines for controller callback
-    async def power_on():
+    async def power_on() -> None:
         # Preamp = 0
         # Amp 1 = 1
         # Amp 2 = 2
@@ -393,7 +407,7 @@ async def _run(args) -> None:
         # Update strip state
         await strip.update()
 
-    async def power_off():
+    async def power_off() -> None:
         # Turn off in reverse order
         for p in reversed(strip.children):
             await p.turn_off()
@@ -402,46 +416,45 @@ async def _run(args) -> None:
         # Update strip state
         await strip.update()
 
+        # Ensure TT preamp is off too
+        if plug:
+            await plug.turn_off()
+            await plug.update()
+
         # Turn off LED
         led.off()
 
-    async def on_state(state: PlayerState) -> None:
-        # Handle table LED and preamp
-        if state == PlayerState.PLAYING:
-            if _TURNTABLE_PLAYER_NAME in controller.active_players:
-                led.green()
-
+    async def on_player_state(player: str, state: PlayerState) -> None:
+        # Handle turntable preamp
+        if player == _TURNTABLE_PLAYER_NAME:
+            if state == PlayerState.PLAYING:
                 # Turn on the preamp
-                if plug:
-                    if not plug.is_on:
-                        _LOGGER.info("Turning on turntable preamp.")
-                        await plug.turn_on()
-
-                    # Update plug state
+                if plug and not plug.is_on:
+                    _LOGGER.info("Turning on turntable preamp.")
+                    await plug.turn_on()
                     await plug.update()
 
             else:
-                led.blue()
-
                 # Turn off the preamp
-                if plug:
-                    if plug.is_on:
-                        _LOGGER.info("Turning off turntable preamp.")
-                        await plug.turn_off()
-
-                    # Update plug state
+                if plug and plug.is_on:
+                    _LOGGER.info("Turning off turntable preamp.")
+                    await plug.turn_off()
                     await plug.update()
-        elif state == PlayerState.PAUSED:
-            led.yellow()
-        elif state == PlayerState.STOPPED:
-            led.red()
+
+        # Handle LED
+        if _TURNTABLE_PLAYER_NAME in controller.active_players:
+            led.green()
+        elif controller.active_players:
+            led.blue()
 
     # Create controller to handle system state
     controller = SystemController(args.stop_timeout, args.pause_timeout)
     # Add callbacks
     controller.activate = power_on
     controller.deactivate = power_off
-    controller.on_state = on_state
+    controller.on_player_state = on_player_state
+    controller.on_pause = led.yellow
+    controller.on_stopping = led.red
 
     # Setup external button control
     def button_pressed(device):
@@ -457,9 +470,6 @@ async def _run(args) -> None:
             controller.update(_TURNTABLE_PLAYER_NAME, PlayerState.PLAYING)
         else:
             controller.update(_TURNTABLE_PLAYER_NAME, PlayerState.STOPPED)
-
-            # Set LED to blue in case any other players are active
-            led.blue()
 
     def button_held():
         _LOGGER.debug("Button was held.")
