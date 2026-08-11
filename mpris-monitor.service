@@ -8,6 +8,8 @@ ExecStart=/home/pi/.local/bin/mpris-monitor-kasa --pause-timeout=300 --stop-time
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mpris-monitor
+Restart=always
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
